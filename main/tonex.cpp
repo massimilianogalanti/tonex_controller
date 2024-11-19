@@ -197,7 +197,7 @@ void Tonex::processBuffer()
             return;
         }
 
-        //ESP_LOG_BUFFER_HEX(TAG, buffer.data(), buffer.size());
+        ESP_LOG_BUFFER_HEXDUMP(TAG, buffer.data(), buffer.size(), ESP_LOG_INFO);
 
         switch (msg->header.type)
         {

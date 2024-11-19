@@ -21,6 +21,7 @@
 # SOFTWARE.
 
 dependencies:
+  espressif/led_strip: "*"
   espressif/usb_host_cdc_acm: "^2.0.5"
   idf:
     version: ">=4.1.0"
