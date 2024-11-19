@@ -24,7 +24,9 @@ namespace pedal
 
     typedef enum
     {
-        APP_SLOT = 0
+        APP_SLOT = 0,
+        APP_PRESET,
+        APP_PRESET_INCR
     } app_event_group_t;
 
     typedef struct
@@ -33,14 +35,16 @@ namespace pedal
         union
         {
             Slot slot;
+            uint8_t preset;
+            int8_t incr;
         };
     } app_event_queue_t;
 
     static void gpio_cb(void *arg)
     {
         const app_event_queue_t evt_queue = {
-            .event_group = APP_SLOT,
-            .slot = Slot::A};
+            .event_group = APP_PRESET_INCR,
+            .incr = 1};
 
         BaseType_t xTaskWoken = pdFALSE;
 
@@ -76,9 +80,28 @@ namespace pedal
         {
             if (xQueueReceive(app_event_queue, &evt_queue, portMAX_DELAY))
             {
-                if (APP_SLOT == evt_queue.event_group)
+                const Slot currentSlot = tonex->getCurrentSlot();
+                const uint8_t preset = tonex->getPreset(currentSlot);
+
+                switch (evt_queue.event_group)
                 {
+                case APP_SLOT:
                     tonex->setSlot(evt_queue.slot);
+                    break;
+                case APP_PRESET:
+                    tonex->changePreset(currentSlot, evt_queue.preset);
+                    break;
+                case APP_PRESET_INCR:
+                {
+                    int8_t newPreset = preset + evt_queue.incr;
+
+                    if (newPreset < 0) newPreset = 19;
+                    if (newPreset > 19) newPreset = 0;
+                    tonex->changePreset(currentSlot, (uint8_t) newPreset);
+                }
+                break;
+                default:
+                    break;
                 }
             }
         }
