@@ -23,6 +23,7 @@
  */
 
 #include "midi.h"
+#include "pedal.h"
 #include "usb.h"
 #include "tonex.h"
 
@@ -32,4 +33,5 @@ extern "C" void app_main(void)
 {   
     tonex.init();
     midi::init(&tonex);
+    pedal::init(&tonex);
 }

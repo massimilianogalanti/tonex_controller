@@ -56,7 +56,7 @@ void USB::usb_host_task(void *arg)
     ESP_ERROR_CHECK(cdc_acm_host_install(NULL));
 
     const cdc_acm_host_device_config_t dev_config = {
-        .connection_timeout_ms = 1000,
+        .connection_timeout_ms = 2000,
         .out_buffer_size = 1024,
         .in_buffer_size = 1024,
         .event_cb = USB::handle_event,
@@ -72,7 +72,7 @@ void USB::usb_host_task(void *arg)
         esp_err_t err = cdc_acm_host_open(usb->vid, usb->pid, 0, &dev_config, &(usb->cdc_dev));
         if (ESP_OK != err)
         {
-            ESP_LOGI(TAG, "Failed to open device");
+            ESP_LOGI(TAG, "Failed to open device, error: %0x", err);
             continue;
         }
         vTaskDelay(pdMS_TO_TICKS(100));

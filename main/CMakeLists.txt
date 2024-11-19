@@ -20,5 +20,5 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-idf_component_register(SRCS "hdlc.cpp" "midi.cpp" "usb.cpp" "tonex.cpp" "tonex_controller.cpp" 
+idf_component_register(SRCS "pedal.cpp" "hdlc.cpp" "midi.cpp" "usb.cpp" "tonex.cpp" "tonex_controller.cpp" 
                     INCLUDE_DIRS ".")
