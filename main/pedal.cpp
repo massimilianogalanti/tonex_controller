@@ -21,19 +21,30 @@
 #define MOSI_PIN 11
 #define CS_PIN 10
 #define CLK_PIN 12
-#define HOST    SPI3_HOST
+#define HOST SPI3_HOST
 
 static const uint64_t symbols[] = {
-    0x3c66666e76663c00, // digits 0-9
-    0x7e1818181c181800,
-    0x7e060c3060663c00,
-    0x3c66603860663c00,
-    0x30307e3234383000,
-    0x3c6660603e067e00,
-    0x3c66663e06663c00,
-    0x1818183030667e00,
-    0x3c66663c66663c00,
-    0x3c66607c66663c00,
+    /* Numbers 0-19 */
+    0x00003c666e76663c,
+    0x00003c18181c1818,
+    0x00007e0c3060663c,
+    0x00003c627860663c,
+    0x0000307e32343830,
+    0x00003c66603e067e,
+    0x00003c663e06663c,
+    0x000018183030667e,
+    0x00003c663c66663c,
+    0x00003c607c66663c,
+    0xff003c666e76663c,
+    0xff003c18181c1818,
+    0xff007e0c3060663c,
+    0xff003c627860663c,
+    0xff00307e32343830,
+    0xff003c66603e067e,
+    0xff003c663e06663c,
+    0xff0018183030667e,
+    0xff003c663c66663c,
+    0xff003c607c66663c,
 
     0x383838fe7c381000, // arrow up
     0x10387cfe38383800, // arrow down
@@ -71,6 +82,18 @@ led_strip_rmt_config_t rmt_config = {
 /// Create the LED strip object
 led_strip_handle_t led_strip;
 
+typedef enum
+{
+    MODE_PRESETS_IMMEDIATE = 0,
+    MODE_PRESETS_DELAYED,
+    MODE_SCENES
+} mode_e;
+
+static mode_t mode = MODE_PRESETS_IMMEDIATE;
+static int8_t newPreset = -1;
+static int8_t prevPreset = -1;
+static bool heldDebounce = false;
+
 namespace pedal
 {
     static const char *TAG = "TONEX_CONTROLLER_PEDAL";
@@ -98,9 +121,32 @@ namespace pedal
                 //     tonex->changePreset(currentSlot, evt_queue.preset);
                 //     break;
                 case STOMP_C_PIN:
-                    if (ev.event == BUTTON_DOWN)
+                    if (ev.event == BUTTON_UP)
                     {
-                        tonex->setSlot(currentSlot == Slot::A ? Slot::B : Slot::A);
+                        if (mode == MODE_PRESETS_IMMEDIATE && !heldDebounce)
+                        {
+                            tonex->setSlot(currentSlot == Slot::A ? Slot::B : Slot::A);
+                        }
+                        else if (mode == MODE_PRESETS_DELAYED && !heldDebounce)
+                        {
+                            if (newPreset != preset)
+                            {
+                                tonex->changePreset(currentSlot, (uint8_t)newPreset);
+                                prevPreset = preset;
+                            }
+                            else
+                            {
+                                tonex->changePreset(currentSlot, (uint8_t)prevPreset);
+                                newPreset = prevPreset;
+                                prevPreset = preset;
+                            }
+                        }
+                        heldDebounce = false;
+                    }
+                    else if (ev.event == BUTTON_HELD && !heldDebounce)
+                    {
+                        mode = mode == MODE_PRESETS_IMMEDIATE ? MODE_PRESETS_DELAYED : MODE_PRESETS_IMMEDIATE;
+                        heldDebounce = true;
                     }
                     break;
                 case STOMP_L_PIN:
@@ -108,13 +154,22 @@ namespace pedal
                 {
                     if (ev.event == BUTTON_DOWN)
                     {
-                        int8_t newPreset = preset + (ev.pin == STOMP_L_PIN ? -1 : 1);
+                        if (mode == MODE_PRESETS_IMMEDIATE || newPreset < 0)
+                        {
+                            newPreset = preset + (ev.pin == STOMP_L_PIN ? -1 : 1);
+                        }
+                        else
+                        {
+                            newPreset += (ev.pin == STOMP_L_PIN ? -1 : 1);
+                        }
 
                         if (newPreset < 0)
                             newPreset = 19;
                         if (newPreset > 19)
                             newPreset = 0;
-                        tonex->changePreset(currentSlot, (uint8_t)newPreset);
+
+                        if (mode == MODE_PRESETS_IMMEDIATE)
+                            tonex->changePreset(currentSlot, (uint8_t)newPreset);
                     }
                     else if (ev.event == BUTTON_HELD)
                     {
@@ -161,10 +216,29 @@ namespace pedal
             switch (tonex->getConnectionState())
             {
             case StateInitialized:
-                ESP_ERROR_CHECK(led_strip_set_pixel(led_strip, 0, 0, 4, 0));
-                ESP_ERROR_CHECK(led_strip_refresh(led_strip));
+                switch (mode)
+                {
+                case MODE_PRESETS_IMMEDIATE:
+                    ESP_ERROR_CHECK(led_strip_set_pixel(led_strip, 0, 0, 4, 0));
+                    ESP_ERROR_CHECK(led_strip_refresh(led_strip));
 
-                max7219_draw_image_8x8(&dev, 0, (uint8_t *)symbols + 8*(tonex->getPreset(tonex->getCurrentSlot()) % 10));
+                    max7219_draw_image_8x8(&dev, 0, (uint8_t *)symbols + 8 * (tonex->getPreset(tonex->getCurrentSlot()) % 20));
+                    break;
+                case MODE_PRESETS_DELAYED:
+                    ESP_ERROR_CHECK(led_strip_set_pixel(led_strip, 0, 4, 4, 0));
+                    ESP_ERROR_CHECK(led_strip_refresh(led_strip));
+
+                    max7219_draw_image_8x8(&dev, 0, (uint8_t *)symbols + 8 * (newPreset % 20));
+                    vTaskDelay(newPreset == tonex->getPreset(tonex->getCurrentSlot()) ? 500 : 250 / portTICK_PERIOD_MS);
+                    max7219_clear(&dev);
+                    break;
+                case MODE_SCENES:
+                    ESP_ERROR_CHECK(led_strip_set_pixel(led_strip, 0, 4, 0, 4));
+                    ESP_ERROR_CHECK(led_strip_refresh(led_strip));
+                    break;
+                default:
+                    break;
+                }
                 break;
             default:
                 ESP_ERROR_CHECK(led_strip_set_pixel(led_strip, 0, 4, 0, 0));
@@ -175,7 +249,6 @@ namespace pedal
             }
             vTaskDelay(500 / portTICK_PERIOD_MS);
 
-             
             // if (xQueueReceive(button_events, &ev, portMAX_DELAY))
             // }
         }
