@@ -15,6 +15,33 @@
 #include "tonex.h"
 #include "led_strip.h"
 #include "button.h"
+#include "max7219.h"
+
+#define CASCADE_SIZE 1
+#define MOSI_PIN 11
+#define CS_PIN 10
+#define CLK_PIN 12
+#define HOST    SPI3_HOST
+
+static const uint64_t symbols[] = {
+    0x3c66666e76663c00, // digits 0-9
+    0x7e1818181c181800,
+    0x7e060c3060663c00,
+    0x3c66603860663c00,
+    0x30307e3234383000,
+    0x3c6660603e067e00,
+    0x3c66663e06663c00,
+    0x1818183030667e00,
+    0x3c66663c66663c00,
+    0x3c66607c66663c00,
+
+    0x383838fe7c381000, // arrow up
+    0x10387cfe38383800, // arrow down
+    0x10307efe7e301000, // arrow right
+    0x1018fcfefc181000  // arrow left
+
+};
+static const size_t symbols_size = sizeof(symbols) - sizeof(uint64_t) * CASCADE_SIZE;
 
 #define STOMP_L_PIN 4
 #define STOMP_C_PIN 5
@@ -110,6 +137,25 @@ namespace pedal
         ESP_ERROR_CHECK(led_strip_set_pixel(led_strip, 0, 0, 4, 0));
         ESP_ERROR_CHECK(led_strip_refresh(led_strip));
 
+        spi_bus_config_t cfg = {
+            .mosi_io_num = MOSI_PIN,
+            .miso_io_num = -1,
+            .sclk_io_num = CLK_PIN,
+            .quadwp_io_num = -1,
+            .quadhd_io_num = -1,
+            .max_transfer_sz = 0,
+            .flags = 0};
+        ESP_ERROR_CHECK(spi_bus_initialize(HOST, &cfg, SPI_DMA_CH_AUTO));
+
+        max7219_t dev = {
+            .digits = 0,
+            .cascade_size = CASCADE_SIZE,
+            .mirrored = true};
+        ESP_ERROR_CHECK(max7219_init_desc(&dev, HOST, MAX7219_MAX_CLOCK_SPEED_HZ, GPIO_NUM_10));
+        ESP_ERROR_CHECK(max7219_init(&dev));
+
+        max7219_set_brightness(&dev, MAX7219_MAX_BRIGHTNESS);
+
         while (1)
         {
             switch (tonex->getConnectionState())
@@ -117,6 +163,8 @@ namespace pedal
             case StateInitialized:
                 ESP_ERROR_CHECK(led_strip_set_pixel(led_strip, 0, 0, 4, 0));
                 ESP_ERROR_CHECK(led_strip_refresh(led_strip));
+
+                max7219_draw_image_8x8(&dev, 0, (uint8_t *)symbols + 8*(tonex->getPreset(tonex->getCurrentSlot()) % 10));
                 break;
             default:
                 ESP_ERROR_CHECK(led_strip_set_pixel(led_strip, 0, 4, 0, 0));
@@ -126,6 +174,8 @@ namespace pedal
                 ESP_ERROR_CHECK(led_strip_clear(led_strip));
             }
             vTaskDelay(500 / portTICK_PERIOD_MS);
+
+             
             // if (xQueueReceive(button_events, &ev, portMAX_DELAY))
             // }
         }
