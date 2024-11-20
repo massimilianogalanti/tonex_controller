@@ -90,6 +90,8 @@ private:
     void hello();
     
 public:
+    ConnectionState getConnectionState();
+
     void setSlot(Slot slot);
     void handleMessage(std::vector<uint8_t> raw);
     void init();

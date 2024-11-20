@@ -52,6 +52,11 @@ void Tonex::onConnection()
     ESP_LOGI(TAG, "Initialized");
 }
 
+ConnectionState Tonex::getConnectionState()
+{
+    return connectionState;
+}
+
 void Tonex::init()
 {
     semaphore = xSemaphoreCreateBinary();
@@ -197,7 +202,7 @@ void Tonex::processBuffer()
             return;
         }
 
-        ESP_LOG_BUFFER_HEXDUMP(TAG, buffer.data(), buffer.size(), ESP_LOG_INFO);
+        //ESP_LOG_BUFFER_HEXDUMP(TAG, buffer.data(), buffer.size(), ESP_LOG_INFO);
 
         switch (msg->header.type)
         {
