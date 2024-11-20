@@ -147,6 +147,7 @@ namespace pedal
                     {
                         mode = mode == MODE_PRESETS_IMMEDIATE ? MODE_PRESETS_DELAYED : MODE_PRESETS_IMMEDIATE;
                         heldDebounce = true;
+                        newPreset = preset;
                     }
                     break;
                 case STOMP_L_PIN:
@@ -211,6 +212,7 @@ namespace pedal
 
         max7219_set_brightness(&dev, MAX7219_MAX_BRIGHTNESS);
 
+        uint8_t i = 0;
         while (1)
         {
             switch (tonex->getConnectionState())
@@ -229,8 +231,10 @@ namespace pedal
                     ESP_ERROR_CHECK(led_strip_refresh(led_strip));
 
                     max7219_draw_image_8x8(&dev, 0, (uint8_t *)symbols + 8 * (newPreset % 20));
-                    vTaskDelay(newPreset == tonex->getPreset(tonex->getCurrentSlot()) ? 500 : 250 / portTICK_PERIOD_MS);
-                    max7219_clear(&dev);
+                    if ((newPreset == tonex->getPreset(tonex->getCurrentSlot()) && 0 == (i % 10)) ||
+                        (newPreset != tonex->getPreset(tonex->getCurrentSlot()) && 0 == (i % 5)))
+                        max7219_clear(&dev);
+
                     break;
                 case MODE_SCENES:
                     ESP_ERROR_CHECK(led_strip_set_pixel(led_strip, 0, 4, 0, 4));
@@ -239,6 +243,7 @@ namespace pedal
                 default:
                     break;
                 }
+                vTaskDelay(100 / portTICK_PERIOD_MS);
                 break;
             default:
                 ESP_ERROR_CHECK(led_strip_set_pixel(led_strip, 0, 4, 0, 0));
@@ -246,11 +251,9 @@ namespace pedal
 
                 vTaskDelay(500 / portTICK_PERIOD_MS);
                 ESP_ERROR_CHECK(led_strip_clear(led_strip));
+                vTaskDelay(500 / portTICK_PERIOD_MS);
             }
-            vTaskDelay(500 / portTICK_PERIOD_MS);
-
-            // if (xQueueReceive(button_events, &ev, portMAX_DELAY))
-            // }
+            i++;
         }
     }
 
