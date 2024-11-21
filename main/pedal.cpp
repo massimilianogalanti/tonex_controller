@@ -17,14 +17,13 @@
 #include "button.h"
 #include "max7219.h"
 
-#define CASCADE_SIZE 1
+#define CASCADE_SIZE 2
 #define MOSI_PIN 11
 #define CS_PIN 10
 #define CLK_PIN 12
 #define HOST SPI3_HOST
 
 static const uint64_t symbols[] = {
-    /* Numbers 0-19 */
     0x00003c666e76663c,
     0x00003c18181c1818,
     0x00007e0c3060663c,
@@ -45,14 +44,43 @@ static const uint64_t symbols[] = {
     0xff0018183030667e,
     0xff003c663c66663c,
     0xff003c607c66663c,
-
-    0x383838fe7c381000, // arrow up
-    0x10387cfe38383800, // arrow down
-    0x10307efe7e301000, // arrow right
-    0x1018fcfefc181000  // arrow left
-
-};
+    0xffffffffffffffff,
+    0xffffc3c3c3c3ffff,
+    0x187e66c3c3667e18,
+    0xff7e7e3c3c3c1818,
+    0xc3e77e3c3c7ee7c3,
+    0x3c1818181818183c,
+    0x1e3666666666361e,
+    0x3e7e607e7e067e7c,
+    0x3e66667e1e36361e,
+    0x0406ff2664ff6020,
+    0x1818181818181818,
+    0x6666666666666666,
+    0xdbdbdbdbdbdbdbdb,
+    0x0000000000000000};
 static const size_t symbols_size = sizeof(symbols) - sizeof(uint64_t) * CASCADE_SIZE;
+
+enum
+{
+    SYMBOL_SQUAREFULL = 20,
+    SYMBOL_SQUARE,
+    SYMBOL_CIRCLE,
+    SYMBOL_TRIANGLE,
+    SYMBOL_CROSS,
+    SYMBOL_I,
+    SYMBOL_D,
+    SYMBOL_S,
+    SYMBOL_B,
+    SYMBOL_ARROW_FWD,
+    SYMBOL_ROMAN_I,
+    SYMBOL_ROMAN_II,
+    SYMBOL_ROMAN_III,
+    SYMBOL_BLANK
+};
+
+#define SYMBOL_SCENE0 SYMBOL_ROMAN_I
+#define SYMBOL_SCENE1 SYMBOL_ROMAN_II
+#define SYMBOL_SCENE2 SYMBOL_ROMAN_III
 
 #define STOMP_L_PIN 4
 #define STOMP_C_PIN 5
@@ -84,15 +112,63 @@ led_strip_handle_t led_strip;
 
 typedef enum
 {
-    MODE_PRESETS_IMMEDIATE = 0,
+    MODE_MENU = 0,
+    MODE_PRESETS_IMMEDIATE,
     MODE_PRESETS_DELAYED,
-    MODE_SCENES
+    MODE_SCENES,
+    MODE_BRIGHTNESS
 } mode_e;
 
-static mode_t mode = MODE_PRESETS_IMMEDIATE;
+unsigned char modeSymbol(mode_e mode)
+{
+    switch (mode)
+    {
+    case MODE_PRESETS_IMMEDIATE:
+        return SYMBOL_I;
+    case MODE_PRESETS_DELAYED:
+        return SYMBOL_D;
+    case MODE_SCENES:
+        return SYMBOL_S;
+    case MODE_BRIGHTNESS:
+        return SYMBOL_B;
+    default:
+        return SYMBOL_CROSS;
+    }
+}
+
+unsigned char sceneSymbol(uint8_t scene)
+{
+    switch (scene)
+    {
+    case 0:
+        return SYMBOL_SCENE0;
+    case 1:
+        return SYMBOL_SCENE1;
+    case 2:
+        return SYMBOL_SCENE2;
+    default:
+        return SYMBOL_CROSS;
+    }
+}
+
+static mode_e mode = MODE_PRESETS_IMMEDIATE;
+static mode_e newMode = MODE_PRESETS_IMMEDIATE;
 static int8_t newPreset = -1;
 static int8_t prevPreset = -1;
 static bool heldDebounce = false;
+
+static uint8_t scene = 0;
+static uint8_t brightness = 0;
+
+typedef struct
+{
+    uint8_t presetA;
+    uint8_t presetB;
+} scene_t;
+
+static scene_t scenePresets[] = {{1, 15}, {1, 15}, {1, 15}};
+
+#define SCENE_CHANGE_IS_PENDING() (scenePresets[scene].presetA != tonex->getPreset(Slot::A) || scenePresets[scene].presetB != tonex->getPreset(Slot::B))
 
 namespace pedal
 {
@@ -114,12 +190,6 @@ namespace pedal
 
                 switch (ev.pin)
                 {
-                // case APP_SLOT:
-                //     tonex->setSlot(evt_queue.slot);
-                //     break;
-                // case APP_PRESET:
-                //     tonex->changePreset(currentSlot, evt_queue.preset);
-                //     break;
                 case STOMP_C_PIN:
                     if (ev.event == BUTTON_UP)
                     {
@@ -141,11 +211,37 @@ namespace pedal
                                 prevPreset = preset;
                             }
                         }
+                        else if (mode == MODE_SCENES && !heldDebounce)
+                        {
+                            if (SCENE_CHANGE_IS_PENDING())
+                            {
+                                if (1 == scene)
+                                {
+                                    scenePresets[scene].presetA = tonex->getPreset(Slot::A);
+                                    scenePresets[scene].presetB = tonex->getPreset(Slot::B);
+                                }
+                            }
+                            else
+                            {
+                                scene = 1;
+                                tonex->changePreset(Slot::A, scenePresets[scene].presetA);
+                                tonex->changePreset(Slot::B, scenePresets[scene].presetB);
+                            }
+                        }
                         heldDebounce = false;
                     }
                     else if (ev.event == BUTTON_HELD && !heldDebounce)
                     {
-                        mode = mode == MODE_PRESETS_IMMEDIATE ? MODE_PRESETS_DELAYED : MODE_PRESETS_IMMEDIATE;
+                        if (mode != MODE_MENU)
+                        {
+                            newMode = mode;
+                            mode = MODE_MENU;
+                        }
+                        else
+                        {
+                            mode = newMode;
+                        }
+
                         heldDebounce = true;
                         newPreset = preset;
                     }
@@ -153,27 +249,70 @@ namespace pedal
                 case STOMP_L_PIN:
                 case STOMP_R_PIN:
                 {
-                    if (ev.event == BUTTON_DOWN)
+                    if (ev.event == BUTTON_UP && mode == MODE_SCENES)
                     {
-                        if (mode == MODE_PRESETS_IMMEDIATE || newPreset < 0)
+                        if (SCENE_CHANGE_IS_PENDING())
                         {
-                            newPreset = preset + (ev.pin == STOMP_L_PIN ? -1 : 1);
+                            if ((ev.pin == STOMP_L_PIN && scene == 0) || (ev.pin == STOMP_R_PIN && scene == 2))
+                            {
+                                scenePresets[scene].presetA = tonex->getPreset(Slot::A);
+                                scenePresets[scene].presetB = tonex->getPreset(Slot::B);
+                            }
                         }
                         else
                         {
-                            newPreset += (ev.pin == STOMP_L_PIN ? -1 : 1);
+                            scene = ev.pin == STOMP_L_PIN ? 0 : 2;
+                            tonex->changePreset(Slot::A, scenePresets[scene].presetA);
+                            tonex->changePreset(Slot::B, scenePresets[scene].presetB);
                         }
-
-                        if (newPreset < 0)
-                            newPreset = 19;
-                        if (newPreset > 19)
-                            newPreset = 0;
-
-                        if (mode == MODE_PRESETS_IMMEDIATE)
-                            tonex->changePreset(currentSlot, (uint8_t)newPreset);
                     }
-                    else if (ev.event == BUTTON_HELD)
+                    else if (ev.event == BUTTON_DOWN)
                     {
+                        if (mode == MODE_MENU)
+                        {
+                            if (ev.pin == STOMP_L_PIN)
+                            {
+                                if (newMode > 1)
+                                    newMode = (mode_e)((int)newMode - 1);
+                            }
+                            else
+                            {
+                                if (newMode < MODE_BRIGHTNESS)
+                                    newMode = (mode_e)((int)newMode + 1);
+                            }
+                        }
+                        else if (mode == MODE_PRESETS_IMMEDIATE || mode == MODE_PRESETS_DELAYED)
+                        {
+                            if (mode == MODE_PRESETS_IMMEDIATE || newPreset < 0)
+                            {
+                                newPreset = preset + (ev.pin == STOMP_L_PIN ? -1 : 1);
+                            }
+                            else
+                            {
+                                newPreset += (ev.pin == STOMP_L_PIN ? -1 : 1);
+                            }
+
+                            if (newPreset < 0)
+                                newPreset = 19;
+                            if (newPreset > 19)
+                                newPreset = 0;
+
+                            if (mode == MODE_PRESETS_IMMEDIATE)
+                                tonex->changePreset(currentSlot, (uint8_t)newPreset);
+                        }
+                        else if (mode == MODE_BRIGHTNESS)
+                        {
+                            if (ev.pin == STOMP_L_PIN)
+                            {
+                                if (brightness > 0)
+                                    brightness--;
+                            }
+                            else
+                            {
+                                if (brightness < MAX7219_MAX_BRIGHTNESS)
+                                    brightness++;
+                            }
+                        }
                     }
                 }
                 break;
@@ -210,7 +349,7 @@ namespace pedal
         ESP_ERROR_CHECK(max7219_init_desc(&dev, HOST, MAX7219_MAX_CLOCK_SPEED_HZ, GPIO_NUM_10));
         ESP_ERROR_CHECK(max7219_init(&dev));
 
-        max7219_set_brightness(&dev, MAX7219_MAX_BRIGHTNESS);
+        max7219_set_brightness(&dev, brightness);
 
         uint8_t i = 0;
         while (1)
@@ -220,25 +359,43 @@ namespace pedal
             case StateInitialized:
                 switch (mode)
                 {
+                case MODE_MENU:
+                    max7219_draw_image_8x8(&dev, 8, (uint8_t *)symbols + 8 * modeSymbol(newMode));
+                    max7219_draw_image_8x8(&dev, 0, (uint8_t *)symbols + 8 * (SYMBOL_ARROW_FWD));
+                    if (0 == (i % 10))
+                        max7219_draw_image_8x8(&dev, 8, (uint8_t *)symbols + 8 * (SYMBOL_BLANK));
+                    break;
                 case MODE_PRESETS_IMMEDIATE:
                     ESP_ERROR_CHECK(led_strip_set_pixel(led_strip, 0, 0, 4, 0));
                     ESP_ERROR_CHECK(led_strip_refresh(led_strip));
 
-                    max7219_draw_image_8x8(&dev, 0, (uint8_t *)symbols + 8 * (tonex->getPreset(tonex->getCurrentSlot()) % 20));
+                    max7219_draw_image_8x8(&dev, 0, (uint8_t *)symbols + 8 * modeSymbol(mode));
+                    max7219_draw_image_8x8(&dev, 8, (uint8_t *)symbols + 8 * (tonex->getPreset(tonex->getCurrentSlot()) % 20));
                     break;
                 case MODE_PRESETS_DELAYED:
                     ESP_ERROR_CHECK(led_strip_set_pixel(led_strip, 0, 4, 4, 0));
                     ESP_ERROR_CHECK(led_strip_refresh(led_strip));
 
-                    max7219_draw_image_8x8(&dev, 0, (uint8_t *)symbols + 8 * (newPreset % 20));
+                    max7219_draw_image_8x8(&dev, 0, (uint8_t *)symbols + 8 * modeSymbol(mode));
+                    max7219_draw_image_8x8(&dev, 8, (uint8_t *)symbols + 8 * (newPreset % 20));
                     if ((newPreset == tonex->getPreset(tonex->getCurrentSlot()) && 0 == (i % 10)) ||
                         (newPreset != tonex->getPreset(tonex->getCurrentSlot()) && 0 == (i % 5)))
-                        max7219_clear(&dev);
-
+                        max7219_draw_image_8x8(&dev, 8, (uint8_t *)symbols + 8 * (SYMBOL_BLANK));
                     break;
                 case MODE_SCENES:
                     ESP_ERROR_CHECK(led_strip_set_pixel(led_strip, 0, 4, 0, 4));
                     ESP_ERROR_CHECK(led_strip_refresh(led_strip));
+
+                    max7219_draw_image_8x8(&dev, 0, (uint8_t *)symbols + 8 * sceneSymbol(scene));
+                    max7219_draw_image_8x8(&dev, 8, (uint8_t *)symbols + 8 * (tonex->getPreset(tonex->getCurrentSlot()) % 20));
+
+                    if (SCENE_CHANGE_IS_PENDING() && 0 == (i % 5))
+                        max7219_draw_image_8x8(&dev, 8, (uint8_t *)symbols + 8 * (SYMBOL_BLANK));
+                    break;
+                case MODE_BRIGHTNESS:
+                    max7219_draw_image_8x8(&dev, 0, (uint8_t *)symbols + 8 * modeSymbol(mode));
+                    max7219_draw_image_8x8(&dev, 8, (uint8_t *)symbols + 8 * (brightness));
+                    max7219_set_brightness(&dev, brightness);
                     break;
                 default:
                     break;
@@ -248,9 +405,12 @@ namespace pedal
             default:
                 ESP_ERROR_CHECK(led_strip_set_pixel(led_strip, 0, 4, 0, 0));
                 ESP_ERROR_CHECK(led_strip_refresh(led_strip));
+                max7219_draw_image_8x8(&dev, 0, (uint8_t *)symbols + 8 * (SYMBOL_CROSS));
+                max7219_draw_image_8x8(&dev, 8, (uint8_t *)symbols + 8 * (SYMBOL_CROSS));
 
                 vTaskDelay(500 / portTICK_PERIOD_MS);
                 ESP_ERROR_CHECK(led_strip_clear(led_strip));
+                max7219_clear(&dev);
                 vTaskDelay(500 / portTICK_PERIOD_MS);
             }
             i++;
