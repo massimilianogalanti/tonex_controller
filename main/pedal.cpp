@@ -17,6 +17,9 @@
 #include "button.h"
 #include "max7219.h"
 
+#include "nvs_flash.h"
+#include "nvs.h"
+
 #define CASCADE_SIZE 2
 #define MOSI_PIN 11
 #define CS_PIN 10
@@ -166,7 +169,7 @@ typedef struct
     uint8_t presetB;
 } scene_t;
 
-static scene_t scenePresets[] = {{1, 15}, {1, 15}, {1, 15}};
+static scene_t scenePresets[] = {{0, 0}, {0, 0}, {0, 0}};
 
 #define SCENE_CHANGE_IS_PENDING() (scenePresets[scene].presetA != tonex->getPreset(Slot::A) || scenePresets[scene].presetB != tonex->getPreset(Slot::B))
 
@@ -176,6 +179,37 @@ namespace pedal
 
     void pedal_receiver(void *arg)
     {
+        // Initialize NVS
+        esp_err_t err = nvs_flash_init();
+        if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND)
+        {
+            // NVS partition was truncated and needs to be erased
+            // Retry nvs_flash_init
+            ESP_ERROR_CHECK(nvs_flash_erase());
+            err = nvs_flash_init();
+        }
+        ESP_ERROR_CHECK(err);
+
+        // Open
+        ESP_LOGI(TAG, "Opening Non-Volatile Storage (NVS) handle... ");
+        nvs_handle_t my_handle;
+        err = nvs_open("storage", NVS_READWRITE, &my_handle);
+        if (err != ESP_OK)
+        {
+            ESP_LOGE(TAG, "Error (%s) opening NVS handle!\n", esp_err_to_name(err));
+        }
+
+        nvs_get_u8(my_handle, "SCENE0PA", &scenePresets[0].presetA);
+        nvs_get_u8(my_handle, "SCENE0PB", &scenePresets[0].presetB);
+        nvs_get_u8(my_handle, "SCENE1PA", &scenePresets[1].presetA);
+        nvs_get_u8(my_handle, "SCENE1PB", &scenePresets[1].presetB);
+        nvs_get_u8(my_handle, "SCENE2PA", &scenePresets[2].presetA);
+        nvs_get_u8(my_handle, "SCENE2PB", &scenePresets[2].presetB);
+
+        nvs_get_u8(my_handle, "BRIGHTNESS", &brightness);
+
+        nvs_get_u8(my_handle, "LASTMODE", (uint8_t *)&mode);
+
         auto tonex = static_cast<Tonex *>(arg);
         QueueHandle_t button_events = button_init(PIN_BIT(STOMP_L_PIN) | PIN_BIT(STOMP_C_PIN) | PIN_BIT(STOMP_R_PIN));
 
@@ -219,13 +253,22 @@ namespace pedal
                                 {
                                     scenePresets[scene].presetA = tonex->getPreset(Slot::A);
                                     scenePresets[scene].presetB = tonex->getPreset(Slot::B);
+                                    nvs_set_u8(my_handle, "SCENE1PA", scenePresets[1].presetA);
+                                    nvs_set_u8(my_handle, "SCENE1PB", scenePresets[1].presetB);
                                 }
                             }
                             else
                             {
-                                scene = 1;
-                                tonex->changePreset(Slot::A, scenePresets[scene].presetA);
-                                tonex->changePreset(Slot::B, scenePresets[scene].presetB);
+                                if (scene == 1)
+                                {
+                                    tonex->setSlot(currentSlot == Slot::A ? Slot::B : Slot::A);
+                                }
+                                else
+                                {
+                                    scene = 1;
+                                    tonex->changePreset(Slot::A, scenePresets[scene].presetA);
+                                    tonex->changePreset(Slot::B, scenePresets[scene].presetB);
+                                }
                             }
                         }
                         heldDebounce = false;
@@ -240,6 +283,16 @@ namespace pedal
                         else
                         {
                             mode = newMode;
+
+                            switch (mode)
+                            {
+                            case MODE_PRESETS_IMMEDIATE:
+                            case MODE_PRESETS_DELAYED:
+                            case MODE_SCENES:
+                                nvs_set_u8(my_handle, "LASTMODE", mode);
+                            default:
+                                break;
+                            }
                         }
 
                         heldDebounce = true;
@@ -257,13 +310,32 @@ namespace pedal
                             {
                                 scenePresets[scene].presetA = tonex->getPreset(Slot::A);
                                 scenePresets[scene].presetB = tonex->getPreset(Slot::B);
+
+                                if (0 == scene)
+                                {
+                                    nvs_set_u8(my_handle, "SCENE0PA", scenePresets[0].presetA);
+                                    nvs_set_u8(my_handle, "SCENE0PB", scenePresets[0].presetB);
+                                }
+                                else
+                                {
+                                    nvs_set_u8(my_handle, "SCENE2PA", scenePresets[2].presetA);
+                                    nvs_set_u8(my_handle, "SCENE2PB", scenePresets[2].presetB);
+                                }
                             }
                         }
                         else
                         {
-                            scene = ev.pin == STOMP_L_PIN ? 0 : 2;
-                            tonex->changePreset(Slot::A, scenePresets[scene].presetA);
-                            tonex->changePreset(Slot::B, scenePresets[scene].presetB);
+                            const uint8_t newScene = ev.pin == STOMP_L_PIN ? 0 : 2;
+                            if (scene == newScene)
+                            {
+                                tonex->setSlot(currentSlot == Slot::A ? Slot::B : Slot::A);
+                            }
+                            else
+                            {
+                                scene = newScene;
+                                tonex->changePreset(Slot::A, scenePresets[scene].presetA);
+                                tonex->changePreset(Slot::B, scenePresets[scene].presetB);
+                            }
                         }
                     }
                     else if (ev.event == BUTTON_DOWN)
@@ -312,6 +384,7 @@ namespace pedal
                                 if (brightness < MAX7219_MAX_BRIGHTNESS)
                                     brightness++;
                             }
+                            nvs_set_u8(my_handle, "BRIGHTNESS", brightness);
                         }
                     }
                 }
@@ -378,8 +451,7 @@ namespace pedal
 
                     max7219_draw_image_8x8(&dev, 0, (uint8_t *)symbols + 8 * modeSymbol(mode));
                     max7219_draw_image_8x8(&dev, 8, (uint8_t *)symbols + 8 * (newPreset % 20));
-                    if ((newPreset == tonex->getPreset(tonex->getCurrentSlot()) && 0 == (i % 10)) ||
-                        (newPreset != tonex->getPreset(tonex->getCurrentSlot()) && 0 == (i % 5)))
+                    if (newPreset != tonex->getPreset(tonex->getCurrentSlot()) && 0 == (i % 5))
                         max7219_draw_image_8x8(&dev, 8, (uint8_t *)symbols + 8 * (SYMBOL_BLANK));
                     break;
                 case MODE_SCENES:
